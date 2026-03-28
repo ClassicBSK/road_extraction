@@ -1,0 +1,50 @@
+<main class="live-page">
+    <section class="url-card">
+        <h1>Live Road Segmentation</h1>
+        <p>Paste a direct video URL, then load both the original and segmented streams.</p>
+
+        <div class="url-row">
+            <input
+                type="url"
+                placeholder="https://example.com/live-video.mp4"
+                [value]="videoUrlInput()"
+                (input)="onInputChange($event)"
+                (keydown.enter)="applyVideoUrl()"
+            />
+            <button type="button" class="primary" (click)="applyVideoUrl()">Load Streams</button>
+            <button type="button" class="ghost" (click)="clearVideoUrl()">Clear</button>
+        </div>
+    </section>
+
+    <section class="streams-grid">
+        <article class="stream-panel">
+            <header>
+                <h2>Original Video</h2>
+            </header>
+            <div class="stream-frame">
+                @if (activeVideoUrl()) {
+                    @if (useImageForOriginal()) {
+                        <img [src]="activeOriginalImgUrl()" alt="Original stream" />
+                    } @else {
+                        <video [src]="activeVideoUrl()" controls autoplay muted playsinline (error)="onOriginalVideoError()"></video>
+                    }
+                } @else {
+                    <div class="empty-state">Enter a URL and click Load Streams.</div>
+                }
+            </div>
+        </article>
+
+        <article class="stream-panel">
+            <header>
+                <h2>Segmented Output</h2>
+            </header>
+            <div class="stream-frame">
+                @if (segmentedStreamUrl()) {
+                    <img [src]="segmentedStreamUrl()" alt="Segmented stream" />
+                } @else {
+                    <div class="empty-state">Segmented output will appear here.</div>
+                }
+            </div>
+        </article>
+    </section>
+</main>

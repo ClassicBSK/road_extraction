@@ -1,0 +1,39 @@
+# Local throwaway files
+cipher_file.txt
+ciphertext.txt
+download.jpg
+Format-B (1st draft -changes are to be made).docx
+photo_encrypt.py
+recovered.jpg
+UNET copy.ipynb
+
+# Virtual env and Python cache
+.venv/
+__pycache__/
+*.py[cod]
+
+# Large data and model artifacts
+Dataset/
+Papers/
+checkpoints/
+4xresnet_unet/checkpoints/
+backend/spacenet5/
+backend/selim_sef/weights/
+
+# Archive and installer binaries
+*.crdownload
+*.exe
+*.zip
+*.rar
+*.7z
+*.torrent
+
+# Large media artifacts
+*.mp4
+*.mkv
+
+# Notebook/runtime leftovers
+.ipynb_checkpoints/
+
+# Bundled third-party tools
+aria/

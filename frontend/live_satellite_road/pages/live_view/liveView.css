@@ -1,0 +1,116 @@
+.live-page {
+	min-height: 100vh;
+	padding: 1.5rem;
+	background: radial-gradient(circle at 20% 20%, #0f2f35 0%, #07161f 45%, #040b12 100%);
+	color: #e8f2f3;
+	font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+}
+
+.url-card {
+	max-width: 1200px;
+	margin: 0 auto 1.25rem;
+	padding: 1rem;
+	border: 1px solid #2b5e68;
+	border-radius: 12px;
+	background: linear-gradient(180deg, rgba(14, 53, 62, 0.65), rgba(7, 23, 31, 0.9));
+}
+
+.url-card h1 {
+	margin: 0;
+	font-size: 1.45rem;
+}
+
+.url-card p {
+	margin: 0.45rem 0 0.9rem;
+	color: #b3cfd4;
+}
+
+.url-row {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	gap: 0.6rem;
+}
+
+.url-row input {
+	width: 100%;
+	border: 1px solid #3e7f8c;
+	border-radius: 10px;
+	padding: 0.7rem 0.85rem;
+	font-size: 0.95rem;
+	background: #0c2430;
+	color: #dff0f2;
+}
+
+.url-row button {
+	border-radius: 10px;
+	border: 0;
+	padding: 0.7rem 1rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.url-row .primary {
+	background: #1fd3a6;
+	color: #052118;
+}
+
+.url-row .ghost {
+	border: 1px solid #3e7f8c;
+	background: transparent;
+	color: #d6ecef;
+}
+
+.streams-grid {
+	max-width: 1200px;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 1rem;
+}
+
+.stream-panel {
+	border: 1px solid #2d616b;
+	border-radius: 12px;
+	background: rgba(6, 20, 28, 0.82);
+	overflow: hidden;
+}
+
+.stream-panel header {
+	padding: 0.7rem 0.9rem;
+	border-bottom: 1px solid #2b5d66;
+}
+
+.stream-panel h2 {
+	margin: 0;
+	font-size: 1rem;
+}
+
+.stream-frame {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	display: grid;
+	place-items: center;
+	background: #041018;
+}
+
+.stream-frame video,
+.stream-frame img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.empty-state {
+	color: #8fb2ba;
+	font-size: 0.95rem;
+}
+
+@media (max-width: 980px) {
+	.streams-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.url-row {
+		grid-template-columns: 1fr;
+	}
+}

@@ -4,10 +4,11 @@ import threading
 import time
 import logging
 import json
+import csv
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Generator, Optional, Literal
 from urllib.parse import urlparse, urlunparse
 
 import cv2
@@ -23,9 +24,7 @@ from pydantic import BaseModel, Field
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parent
 DEFAULT_ENSEMBLE_DIR = PROJECT_ROOT / "backend"  / "spacenet5"
-SELIM_ROOT = PROJECT_ROOT / "backend" / "selim_sef"
-DEFAULT_SELIM_CONFIG = SELIM_ROOT / "configs" / "irv2.json"
-DEFAULT_SELIM_WEIGHTS = DEFAULT_ENSEMBLE_DIR / "spacenet_irv_unet_inceptionresnetv2_1_best_dice"
+DEFAULT_MODEL_WEIGHTS = DEFAULT_ENSEMBLE_DIR / "spacenet_irv_unet_inceptionresnetv2_1_best_dice"
 OUTPUT_DIR = BACKEND_DIR / "outputs"
 
 try:
@@ -34,26 +33,43 @@ try:
 except Exception:
 	pass
 
-SELIM_OUTPUT_CHANNELS = 12
+MODEL_OUTPUT_CHANNELS = 12
 MODEL_INPUT_SIZE = 512
-SELIM_COLOR_PALETTE = np.array(
+SPEED_CONVERSION_CSV = BACKEND_DIR / "selim_sef" / "speed_conversion_binned10.csv"
+
+MATERIAL_CLASS_NAMES = [
+	"Background",
+	"Asphalt",
+	"Meadows",
+	"Gravel",
+	"Trees",
+	"Metal",
+	"Soil",
+	"Bitumen",
+	"Bricks",
+]
+MATERIAL_COLOR_PALETTE = np.array(
 	[
-		[0, 0, 0],      # background
-		[230, 25, 75],  # ch0
-		[60, 180, 75],  # ch1
-		[255, 225, 25], # ch2
-		[0, 130, 200],  # ch3
-		[245, 130, 48], # ch4
-		[145, 30, 180], # ch5
-		[70, 240, 240], # ch6
-		[240, 50, 230], # ch7
-		[210, 245, 60], # ch8
-		[250, 190, 212],# ch9
-		[0, 128, 128],  # ch10
-		[220, 190, 255],# ch11
+		[0, 0, 0],
+		[220, 20, 60],
+		[34, 139, 34],
+		[255, 165, 0],
+		[0, 128, 0],
+		[169, 169, 169],
+		[139, 69, 19],
+		[75, 0, 130],
+		[178, 34, 34],
 	],
 	dtype=np.uint8,
 )
+
+# Material IDs aligned with MATERIAL_CLASS_NAMES.
+MAT_BACKGROUND = 0
+MAT_ASPHALT = 1
+MAT_GRAVEL = 3
+MAT_SOIL = 6
+MAT_BITUMEN = 7
+MAT_BRICKS = 8
 
 
 class VideoRequest(BaseModel):
@@ -93,7 +109,64 @@ def _resolve_model_path() -> Path:
 	env_path = os.getenv("MODEL_PATH")
 	if env_path:
 		return Path(env_path).expanduser().resolve()
-	return DEFAULT_SELIM_WEIGHTS.resolve()
+	return DEFAULT_MODEL_WEIGHTS.resolve()
+
+
+def _build_channel_to_speed_mapping() -> dict[int, float]:
+	"""
+	Build a representative speed value (mph-like scale from dataset) per channel.
+	Uses speed_conversion_binned10.csv when available and falls back to synthetic bins.
+	"""
+	channel_values: dict[int, list[float]] = {}
+	if SPEED_CONVERSION_CSV.exists():
+		try:
+			with open(SPEED_CONVERSION_CSV, "r", encoding="utf-8") as f:
+				reader = csv.DictReader(f)
+				for row in reader:
+					ch = int(row["channel"])
+					speed = float(row["speed"])
+					channel_values.setdefault(ch, []).append(speed)
+		except Exception as exc:
+			_log_stage("speed_mapping.csv_read_failed", error=repr(exc), path=SPEED_CONVERSION_CSV)
+
+	if channel_values:
+		return {
+			channel: float(np.mean(values))
+			for channel, values in channel_values.items()
+		}
+
+	# Fallback for environments without the speed conversion CSV.
+	return {ch: float(5 + ch * 5) for ch in range(MODEL_OUTPUT_CHANNELS)}
+
+
+def _speed_to_material_id(speed_value: float) -> int:
+	"""
+	Map representative speed to likely road material.
+	Low speeds tend to unpaved/rough surfaces, higher speeds tend to paved roads.
+	"""
+	if speed_value <= 12:
+		return MAT_SOIL
+	if speed_value <= 22:
+		return MAT_GRAVEL
+	if speed_value <= 32:
+		return MAT_BRICKS
+	if speed_value <= 44:
+		return MAT_BITUMEN
+	return MAT_ASPHALT
+
+
+def _build_speed_channel_to_material_mapping() -> dict[int, int]:
+	channel_speed = _build_channel_to_speed_mapping()
+	mapping: dict[int, int] = {}
+	for channel in range(MODEL_OUTPUT_CHANNELS):
+		speed_value = channel_speed.get(channel)
+		if speed_value is None:
+			speed_value = channel_speed[max(channel_speed.keys())] if channel_speed else float(5 + channel * 5)
+		mapping[channel] = _speed_to_material_id(speed_value)
+	return mapping
+
+
+SPEED_CHANNEL_TO_MATERIAL = _build_speed_channel_to_material_mapping()
 
 
 def _normalize_state_dict_keys(state_dict: dict) -> dict:
@@ -102,8 +175,27 @@ def _normalize_state_dict_keys(state_dict: dict) -> dict:
 	return state_dict
 
 
-def _disable_selim_pretrained_downloads(selim_unet_module, encoder_name: str) -> None:
-	encoder_params = selim_unet_module.encoder_params
+def _find_model_impl_root() -> Path:
+	"""Locate model implementation folder by expected config and module files."""
+	override = os.getenv("MODEL_IMPL_ROOT")
+	if override:
+		override_path = Path(override).expanduser().resolve()
+		if override_path.exists():
+			return override_path
+
+	for candidate in BACKEND_DIR.iterdir():
+		if not candidate.is_dir():
+			continue
+		has_config = (candidate / "configs" / "irv2.json").exists()
+		has_models = (candidate / "models").is_dir() and (candidate / "models" / "unet.py").exists()
+		if has_config and has_models:
+			return candidate
+
+	raise FileNotFoundError("Model implementation folder not found")
+
+
+def _disable_pretrained_downloads(unet_module, encoder_name: str) -> None:
+	encoder_params = unet_module.encoder_params
 	if encoder_name not in encoder_params:
 		return
 	init_op = encoder_params[encoder_name].get("init_op")
@@ -115,32 +207,34 @@ def _disable_selim_pretrained_downloads(selim_unet_module, encoder_name: str) ->
 	encoder_params[encoder_name]["url"] = None
 
 
-def _load_selim_model(device: torch.device) -> nn.Module:
+def _load_model_impl(device: torch.device) -> nn.Module:
 	ckpt_path = _resolve_model_path()
-	config_path = Path(os.getenv("MODEL_CONFIG", str(DEFAULT_SELIM_CONFIG))).expanduser().resolve()
+	model_impl_root = _find_model_impl_root()
+	default_config_path = model_impl_root / "configs" / "irv2.json"
+	config_path = Path(os.getenv("MODEL_CONFIG", str(default_config_path))).expanduser().resolve()
 
 	if not ckpt_path.exists():
-		raise FileNotFoundError(f"selim checkpoint not found: {ckpt_path}")
+		raise FileNotFoundError(f"model checkpoint not found: {ckpt_path}")
 	if not config_path.exists():
-		raise FileNotFoundError(f"selim config not found: {config_path}")
+		raise FileNotFoundError(f"model config not found: {config_path}")
 
-	selim_root_str = str(SELIM_ROOT.resolve())
-	if selim_root_str not in sys.path:
-		sys.path.append(selim_root_str)
+	impl_root_str = str(model_impl_root.resolve())
+	if impl_root_str not in sys.path:
+		sys.path.append(impl_root_str)
 
 	import importlib
 
-	selim_models = importlib.import_module("models")
-	selim_unet = importlib.import_module("models.unet")
+	model_lib = importlib.import_module("models")
+	unet_module = importlib.import_module("models.unet")
 
 	with open(config_path, "r", encoding="utf-8") as f:
 		conf = json.load(f)
 
 	encoder_name = conf["encoder"]
-	_disable_selim_pretrained_downloads(selim_unet, encoder_name)
+	_disable_pretrained_downloads(unet_module, encoder_name)
 
-	model = selim_models.__dict__[conf["network"]](
-		seg_classes=SELIM_OUTPUT_CHANNELS,
+	model = model_lib.__dict__[conf["network"]](
+		seg_classes=MODEL_OUTPUT_CHANNELS,
 		backbone_arch=encoder_name,
 	).to(device)
 
@@ -150,23 +244,23 @@ def _load_selim_model(device: torch.device) -> nn.Module:
 	missing, unexpected = model.load_state_dict(state_dict, strict=True)
 	if missing or unexpected:
 		raise RuntimeError(
-			"selim state dict mismatch: "
+			"model state dict mismatch: "
 			f"missing={len(missing)} unexpected={len(unexpected)}"
 		)
 
 	model.eval()
 	_log_stage(
-		"model.selim_loaded",
+		"model.loaded",
 		checkpoint=ckpt_path,
 		config=config_path,
-		channels=SELIM_OUTPUT_CHANNELS,
+		channels=MODEL_OUTPUT_CHANNELS,
 	)
 	return model
 
 def _load_model() -> tuple[torch.nn.Module, torch.device]:
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	_log_stage("model.backend", backend="selim", device=device)
-	model = _load_selim_model(device)
+	_log_stage("model.backend", backend="custom", device=device)
+	model = _load_model_impl(device)
 	return model, device
 
 
@@ -228,15 +322,26 @@ def _predict_mask(frame_bgr: np.ndarray, confidence_threshold: float = 0.0) -> n
 		logits = MODEL(tensor)
 		probs = torch.sigmoid(logits)
 		conf, pred = torch.max(probs, dim=1)
-		# Use 0.5 as selim default threshold for black background when API threshold is not provided.
+		# Use 0.5 as default threshold for black background when API threshold is not provided.
 		threshold = confidence_threshold if confidence_threshold > 0 else 0.5
 
 	pred_np = pred.squeeze(0).detach().cpu().numpy().astype(np.uint8)
 	conf_np = conf.squeeze(0).detach().cpu().numpy()
 	label_np = np.where(conf_np >= threshold, pred_np + 1, 0).astype(np.uint8)
-	mask_resized = cv2.resize(label_np, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
-	mask_bgr = SELIM_COLOR_PALETTE[mask_resized]
-	return mask_bgr
+	return cv2.resize(label_np, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
+
+
+def _map_speed_labels_to_material_labels(speed_labels: np.ndarray) -> np.ndarray:
+	material_labels = np.zeros_like(speed_labels, dtype=np.uint8)
+	for speed_channel, material_id in SPEED_CHANNEL_TO_MATERIAL.items():
+		speed_label_id = speed_channel + 1
+		material_labels[speed_labels == speed_label_id] = material_id
+	return material_labels
+
+
+def _colorize_labels(label_map: np.ndarray) -> np.ndarray:
+	material_labels = _map_speed_labels_to_material_labels(label_map)
+	return MATERIAL_COLOR_PALETTE[material_labels]
 
 
 def _normalize_video_url(raw_url: str) -> str:
@@ -342,7 +447,12 @@ def _select_working_video_url(raw_video_url: str) -> str:
 
 
 def _frame_stream(request: VideoRequest) -> Generator[bytes, None, None]:
-	_log_stage("stream.open", url=request.video_url, frame_skip=request.frame_skip, threshold=request.confidence_threshold)
+	_log_stage(
+		"stream.open",
+		url=request.video_url,
+		frame_skip=request.frame_skip,
+		threshold=request.confidence_threshold,
+	)
 	cap = cv2.VideoCapture(request.video_url)
 	if not cap.isOpened():
 		_log_stage("stream.open_failed", url=request.video_url)
@@ -377,7 +487,10 @@ def _frame_stream(request: VideoRequest) -> Generator[bytes, None, None]:
 			if request.frame_skip > 1 and (frame_index % request.frame_skip != 0):
 				continue
 
-			mask_frame = _predict_mask(frame, confidence_threshold=request.confidence_threshold)
+			speed_label_map = _predict_mask(frame, confidence_threshold=request.confidence_threshold)
+			mask_frame_rgb = _colorize_labels(speed_label_map)
+			# OpenCV encode/write expect BGR channel order.
+			mask_frame_bgr = cv2.cvtColor(mask_frame_rgb, cv2.COLOR_RGB2BGR)
 			processed_frames += 1
 			if processed_frames == 1:
 				_log_stage("stream.first_frame_processed", url=request.video_url, frame_shape=frame.shape)
@@ -385,9 +498,9 @@ def _frame_stream(request: VideoRequest) -> Generator[bytes, None, None]:
 				_log_stage("stream.progress", url=request.video_url, processed=processed_frames)
 
 			if writer is not None:
-				writer.write(mask_frame)
+				writer.write(mask_frame_bgr)
 
-			success, encoded = cv2.imencode(".jpg", mask_frame)
+			success, encoded = cv2.imencode(".jpg", mask_frame_bgr)
 			if not success:
 				continue
 
@@ -418,6 +531,10 @@ def health_check() -> dict:
 		"status": status,
 		"device": str(DEVICE),
 		"model_path": str(_resolve_model_path()),
+		"speed_to_material_mapping": {
+			str(ch): MATERIAL_CLASS_NAMES[mid]
+			for ch, mid in SPEED_CHANNEL_TO_MATERIAL.items()
+		},
 		"model_error": MODEL_LOAD_ERROR,
 		"model_loading": MODEL_LOADING,
 		"model_loaded": MODEL is not None,
@@ -427,7 +544,12 @@ def health_check() -> dict:
 
 @app.post("/segment/stream")
 def segment_stream(request: VideoRequest) -> StreamingResponse:
-	_log_stage("request.segment_stream", url=request.video_url, frame_skip=request.frame_skip, threshold=request.confidence_threshold)
+	_log_stage(
+		"request.segment_stream",
+		url=request.video_url,
+		frame_skip=request.frame_skip,
+		threshold=request.confidence_threshold,
+	)
 	if MODEL_LOADING:
 		raise HTTPException(status_code=503, detail="Model is still loading, please retry shortly")
 	if MODEL is None:
@@ -447,7 +569,12 @@ def segment_stream_url(
 	frame_skip: int = Query(1, ge=1, le=10),
 	confidence_threshold: float = Query(0.0, ge=0.0, le=1.0),
 ) -> StreamingResponse:
-	_log_stage("request.segment_stream_url", url=video_url, frame_skip=frame_skip, threshold=confidence_threshold)
+	_log_stage(
+		"request.segment_stream_url",
+		url=video_url,
+		frame_skip=frame_skip,
+		threshold=confidence_threshold,
+	)
 	if MODEL_LOADING:
 		raise HTTPException(status_code=503, detail="Model is still loading, please retry shortly")
 	if MODEL is None:

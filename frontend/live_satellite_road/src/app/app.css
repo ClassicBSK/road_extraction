@@ -1,0 +1,32 @@
+.top-nav {
+	position: sticky;
+	top: 0;
+	z-index: 100;
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	border-bottom: 1px solid #22505b;
+	background: linear-gradient(180deg, rgba(8, 24, 31, 0.96), rgba(5, 15, 22, 0.95));
+}
+
+.top-nav a {
+	color: #b9d8dd;
+	text-decoration: none;
+	font-weight: 600;
+	padding: 0.45rem 0.75rem;
+	border: 1px solid #2f6975;
+	border-radius: 999px;
+	transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.top-nav a:hover {
+	color: #ebfbff;
+	border-color: #53a9bb;
+	background: rgba(67, 152, 170, 0.15);
+}
+
+.top-nav a.active {
+	color: #052118;
+	border-color: #1fd3a6;
+	background: #1fd3a6;
+}

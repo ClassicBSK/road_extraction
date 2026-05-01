@@ -18,6 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+try:
+    from ..tracing.otlp_tracer import init_tracer, trace_decorator, instrument_fastapi_app, instrument_requests
+except ImportError:
+    _project_root_for_import = Path(__file__).resolve().parents[1]
+    if str(_project_root_for_import) not in sys.path:
+        sys.path.append(str(_project_root_for_import))
+    from tracing.otlp_tracer import init_tracer, trace_decorator, instrument_fastapi_app, instrument_requests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -56,6 +63,7 @@ CLASS_COLORS = np.array(
     dtype=np.uint8,
 )
 
+init_tracer("segmentation_backend")
 
 class HSISegmentRequest(BaseModel):
     hsi_mat_path: str = Field(..., description="Path to .mat file containing HSI cube")
@@ -79,6 +87,10 @@ class VideoRequest(BaseModel):
 
 
 app = FastAPI(title="HSI-MSI Material Segmentation API", version="1.0.0")
+
+instrument_fastapi_app(app)
+instrument_requests()
+
 logger = logging.getLogger("hsi-msi-api")
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -100,7 +112,7 @@ MODEL_LOAD_ERROR: Optional[str] = None
 MODEL_LOADING = False
 MODEL_LOCK = threading.Lock()
 
-
+@trace_decorator("_log_stage")
 def _log_stage(stage: str, **kwargs) -> None:
     if kwargs:
         details = " ".join(f"{k}={v}" for k, v in kwargs.items())
@@ -108,7 +120,7 @@ def _log_stage(stage: str, **kwargs) -> None:
     else:
         logger.info("stage=%s", stage)
 
-
+@trace_decorator("_resolve_weights_path")
 def _resolve_weights_path() -> Path:
     env_path = os.getenv("HSI_MSI_MODEL_PATH")
     if env_path:
@@ -123,7 +135,7 @@ def _resolve_weights_path() -> Path:
         "Set HSI_MSI_MODEL_PATH to a .pth/.pt/.ckpt file to override."
     )
 
-
+@trace_decorator("_choose_checkpoint_file")
 def _choose_checkpoint_file(path: Path) -> Path:
     if path.is_file():
         return path
@@ -147,7 +159,7 @@ def _choose_checkpoint_file(path: Path) -> Path:
     candidates.sort()
     return candidates[0]
 
-
+@trace_decorator("_repack_extracted_torch_checkpoint")
 def _repack_extracted_torch_checkpoint(extracted_dir: Path) -> Path:
     """
     Repack an extracted torch.save zip archive directory into a .pth file.
@@ -172,7 +184,7 @@ def _repack_extracted_torch_checkpoint(extracted_dir: Path) -> Path:
     _log_stage("model.repacked_checkpoint", source=str(extracted_dir), target=str(repacked_path))
     return repacked_path
 
-
+@trace_decorator("_build_model")
 def _build_model(device: torch.device) -> torch.nn.Module:
     try:
         import segmentation_models_pytorch as smp
@@ -189,7 +201,7 @@ def _build_model(device: torch.device) -> torch.nn.Module:
     ).to(device)
     return model
 
-
+@trace_decorator("_normalize_state_dict_for_loading")
 def _normalize_state_dict_for_loading(state_dict: dict) -> dict:
     fixed = {}
     for key, value in state_dict.items():
@@ -201,7 +213,7 @@ def _normalize_state_dict_for_loading(state_dict: dict) -> dict:
         fixed[normalized] = value
     return fixed
 
-
+@trace_decorator("_safe_torch_load")
 def _safe_torch_load(checkpoint_file: Path, device: torch.device):
     # Prefer tensor-only loading to avoid failures when old pickled module paths are missing.
     try:
@@ -209,7 +221,7 @@ def _safe_torch_load(checkpoint_file: Path, device: torch.device):
     except Exception:
         return torch.load(checkpoint_file, map_location=device, weights_only=False)
 
-
+@trace_decorator("_load_model")
 def _load_model() -> tuple[torch.nn.Module, torch.device]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weights_path = _resolve_weights_path()
@@ -244,7 +256,7 @@ def _load_model() -> tuple[torch.nn.Module, torch.device]:
     _log_stage("model.loaded", device=device, checkpoint=str(checkpoint_file))
     return model, device
 
-
+@trace_decorator("_load_road_model")
 def _load_road_model() -> tuple[torch.nn.Module, torch.device]:
     road_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -263,7 +275,7 @@ def _load_road_model() -> tuple[torch.nn.Module, torch.device]:
     _log_stage("road_model.loaded", device=str(road_device))
     return road_model, road_device
 
-
+@trace_decorator("_load_model_once")
 def _load_model_once() -> None:
     global MODEL, ROAD_MODEL, DEVICE, ROAD_DEVICE, MODEL_LOAD_ERROR, MODEL_LOADING
     with MODEL_LOCK:
@@ -292,19 +304,18 @@ def _load_model_once() -> None:
     finally:
         MODEL_LOADING = False
 
-
+@trace_decorator("_start_background_load")
 def _start_background_load() -> None:
     if MODEL is not None or MODEL_LOADING:
         return
     threading.Thread(target=_load_model_once, daemon=True).start()
-
 
 @app.on_event("startup")
 def _startup() -> None:
     _log_stage("app.startup")
     _start_background_load()
 
-
+@trace_decorator("_load_mat_array")
 def _load_mat_array(mat_path: Path, key: str) -> np.ndarray:
     try:
         import scipy.io
@@ -322,7 +333,7 @@ def _load_mat_array(mat_path: Path, key: str) -> np.ndarray:
     arr = np.asarray(payload[key])
     return arr
 
-
+@trace_decorator("_hsi_to_msi_road_optimized")
 def hsi_to_msi_road_optimized(hsi: np.ndarray) -> np.ndarray:
     """Convert 103-band PaviaU HSI to 8 road-focused MSI bands."""
     if hsi.ndim != 3:
@@ -349,7 +360,7 @@ def hsi_to_msi_road_optimized(hsi: np.ndarray) -> np.ndarray:
 
     return msi
 
-
+@trace_decorator("_normalize_msi")
 def normalize_msi(msi: np.ndarray) -> np.ndarray:
     """Per-band min-max normalization to [0, 1], mirroring notebook behavior."""
     msi = msi.astype(np.float32)
@@ -367,7 +378,7 @@ def normalize_msi(msi: np.ndarray) -> np.ndarray:
 
     return out
 
-
+@trace_decorator("_predict_full_scene")
 def _predict_full_scene(msi_norm: np.ndarray) -> np.ndarray:
     if MODEL is None:
         raise RuntimeError("Model is not loaded")
@@ -378,16 +389,16 @@ def _predict_full_scene(msi_norm: np.ndarray) -> np.ndarray:
         pred = torch.argmax(logits, dim=1).squeeze(0).detach().cpu().numpy().astype(np.uint8)
     return pred
 
-
+@trace_decorator("_predict_mask_from_msi")
 def _predict_mask_from_msi(msi_norm: np.ndarray) -> np.ndarray:
     pred = _predict_full_scene(msi_norm)
     return CLASS_COLORS[pred]
 
-
+@trace_decorator("_predict_labels_from_msi")
 def _predict_labels_from_msi(msi_norm: np.ndarray) -> np.ndarray:
     return _predict_full_scene(msi_norm)
 
-
+@trace_decorator("_rgb_frame_to_msi_surrogate")
 def _rgb_frame_to_msi_surrogate(frame_bgr: np.ndarray) -> np.ndarray:
     """
     Build an 8-channel surrogate MSI tensor from RGB video frames.
@@ -414,17 +425,17 @@ def _rgb_frame_to_msi_surrogate(frame_bgr: np.ndarray) -> np.ndarray:
     ).astype(np.float32)
     return normalize_msi(msi)
 
-
+@trace_decorator("_predict_mask_from_frame")
 def _predict_mask_from_frame(frame_bgr: np.ndarray) -> np.ndarray:
     msi = _rgb_frame_to_msi_surrogate(frame_bgr)
     return _predict_mask_from_msi(msi)
 
-
+@trace_decorator("_predict_labels_from_frame")
 def _predict_labels_from_frame(frame_bgr: np.ndarray) -> np.ndarray:
     msi = _rgb_frame_to_msi_surrogate(frame_bgr)
     return _predict_labels_from_msi(msi)
 
-
+@trace_decorator("_predict_road_binary_mask")
 def _predict_road_binary_mask(frame_bgr: np.ndarray, confidence_threshold: float = 0.0) -> np.ndarray:
     if ROAD_MODEL is None:
         raise RuntimeError("Road model is not loaded")
@@ -447,14 +458,14 @@ def _predict_road_binary_mask(frame_bgr: np.ndarray, confidence_threshold: float
     road_mask = cv2.resize(road_mask, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
     return road_mask
 
-
+@trace_decorator("_render_output_frame")
 def _render_output_frame(frame_bgr: np.ndarray, request: VideoRequest) -> np.ndarray:
     labels = _predict_labels_from_frame(frame_bgr)
     road_mask = _predict_road_binary_mask(frame_bgr, confidence_threshold=request.confidence_threshold)
     masked_labels = np.where(road_mask > 0, labels, 0).astype(np.uint8)
     return cv2.cvtColor(CLASS_COLORS[masked_labels], cv2.COLOR_RGB2BGR)
 
-
+@trace_decorator("_normalize_video_url")
 def _normalize_video_url(raw_url: str) -> str:
     url = (raw_url or "").strip()
     if not url:
@@ -474,12 +485,12 @@ def _normalize_video_url(raw_url: str) -> str:
 
     return urlunparse(parsed)
 
-
+@trace_decorator("_looks_like_url")
 def _looks_like_url(value: str) -> bool:
     raw = (value or "").strip().lower()
     return raw.startswith("http://") or raw.startswith("https://") or raw.startswith("localhost") or raw.startswith("127.0.0.1")
 
-
+@trace_decorator("_validate_video_source")
 def _validate_video_source(video_url: str) -> None:
     cap = cv2.VideoCapture(video_url)
     try:
@@ -498,7 +509,7 @@ def _validate_video_source(video_url: str) -> None:
     finally:
         cap.release()
 
-
+@trace_decorator("_frame_stream_url")
 def _frame_stream_url(request: VideoRequest) -> Generator[bytes, None, None]:
     normalized_url = _normalize_video_url(request.video_url)
     cap = cv2.VideoCapture(normalized_url)
@@ -547,7 +558,7 @@ def _frame_stream_url(request: VideoRequest) -> Generator[bytes, None, None]:
         if writer is not None:
             writer.release()
 
-
+@trace_decorator("_compute_iou_metrics")
 def _compute_iou_metrics(pred: np.ndarray, gt: np.ndarray) -> dict:
     metrics = {}
     per_class = {}
@@ -571,7 +582,7 @@ def _compute_iou_metrics(pred: np.ndarray, gt: np.ndarray) -> dict:
     metrics["miou_no_background"] = float(np.mean(ious)) if ious else 0.0
     return metrics
 
-
+@trace_decorator("_save_outputs")
 def _save_outputs(pred: np.ndarray, output_prefix: Optional[str]) -> dict:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -591,6 +602,7 @@ def _save_outputs(pred: np.ndarray, output_prefix: Optional[str]) -> dict:
 
 
 @app.get("/health")
+@trace_decorator("_health_check")
 def health() -> dict:
     if MODEL_LOADING:
         status = "loading"
@@ -613,6 +625,7 @@ def health() -> dict:
 
 
 @app.post("/segment/hsi")
+@trace_decorator("segment_hsi")
 def segment_hsi(request: HSISegmentRequest) -> dict:
     return _segment_core(
         hsi_mat_path=request.hsi_mat_path,
@@ -623,7 +636,7 @@ def segment_hsi(request: HSISegmentRequest) -> dict:
         output_prefix=request.output_prefix,
     )
 
-
+@trace_decorator("_segment_core")
 def _segment_core(
     hsi_mat_path: str,
     hsi_key: str = "paviaU",
@@ -679,6 +692,7 @@ def _segment_core(
 
 
 @app.post("/segment/stream")
+@trace_decorator("segment_stream")
 def segment_stream(request: VideoRequest):
     # Route/method intentionally match main.py.
     if _looks_like_url(request.video_url):
@@ -708,6 +722,7 @@ def segment_stream(request: VideoRequest):
 
 
 @app.get("/segment/stream-url")
+@trace_decorator("segment_stream_url")
 def segment_stream_url(
     video_url: str = Query(..., description="URL of video stream or HSI .mat file path"),
     frame_skip: int = Query(1, ge=1, le=10),
@@ -756,6 +771,7 @@ def segment_stream_url(
 
 
 @app.get("/segment/download/{filename}")
+@trace_decorator("download_mask_video")
 def download_mask_video(filename: str) -> FileResponse:
     file_path = OUTPUT_DIR / filename
     if not file_path.exists():

@@ -37,14 +37,32 @@
         <article class="stream-panel">
             <header>
                 <h2>Segmented Output</h2>
+                <span class="fps-chip">FPS: {{ segmentedFps() }}</span>
             </header>
             <div class="stream-frame">
-                @if (segmentedStreamUrl()) {
-                    <img [src]="segmentedStreamUrl()" alt="Segmented stream" />
+                @if (segmentedDisplayUrl()) {
+                    <img [src]="segmentedDisplayUrl()" alt="Segmented stream" />
+                } @else if (segmentedStreamUrl()) {
+                    <div class="empty-state">Connecting segmented stream...</div>
                 } @else {
                     <div class="empty-state">Segmented output will appear here.</div>
                 }
             </div>
         </article>
+    </section>
+
+    <section class="legend-card">
+        <h3>Material Labels</h3>
+        <div class="legend-grid">
+            @for (item of materialLegend; track item.name) {
+                <article class="legend-item">
+                    <span class="legend-swatch" [style.background-color]="item.hex" [attr.aria-label]="item.name + ' color'"></span>
+                    <div class="legend-text">
+                        <strong>{{ item.name }}</strong>
+                        <small>RGB ({{ item.rgb }}) | Hex {{ item.hex }}</small>
+                    </div>
+                </article>
+            }
+        </div>
     </section>
 </main>

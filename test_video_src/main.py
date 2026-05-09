@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_IMAGE_PATH = BASE_DIR / "test_image.jpg"
 DEFAULT_VIDEO_PATH = BASE_DIR / "test_video.mp4"
 
-FPS = int(os.getenv("TEST_VIDEO_FPS", "12"))
+FPS = int(os.getenv("TEST_VIDEO_FPS", "60"))
 FRAME_WIDTH = int(os.getenv("TEST_VIDEO_WIDTH", "1280"))
 FRAME_HEIGHT = int(os.getenv("TEST_VIDEO_HEIGHT", "720"))
 VIDEO_DURATION_SECONDS = int(os.getenv("TEST_VIDEO_DURATION_SECONDS", "30"))

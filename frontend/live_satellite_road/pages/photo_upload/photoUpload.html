@@ -1,0 +1,81 @@
+<main class="upload-page">
+    <section class="hero-card">
+        <div>
+            <h1>Photo Segmentation Studio</h1>
+            <p>Upload a single image and generate the same road-filtered material mask produced by the live stream route.</p>
+        </div>
+    </section>
+
+    <section class="control-card">
+        <div class="file-stack">
+            <label class="file-drop">
+                <input type="file" accept="image/*" (change)="onFileSelected($event)" />
+                <div class="file-text">
+                    @if (selectedFileName()) {
+                        <strong>{{ selectedFileName() }}</strong>
+                    } @else {
+                        <strong>Choose an image file</strong>
+                    }
+                    <small>PNG, JPG, or other image formats. One file at a time.</small>
+                </div>
+            </label>
+
+        </div>
+
+        <div class="action-row">
+            <button type="button" class="primary" (click)="uploadAndSegment()" [disabled]="isLoading()">@if (isLoading()) { Processing... } @else { Generate Mask }</button>
+            <button type="button" class="ghost" (click)="clearSelection()">Reset</button>
+        </div>
+
+        @if (errorMessage()) {
+            <div class="error-banner">{{ errorMessage() }}</div>
+        }
+    </section>
+
+    <section class="preview-grid">
+        <article class="preview-panel">
+            <header>
+                <h2>Original</h2>
+            </header>
+            <div class="preview-frame">
+                @if (previewUrl()) {
+                    <img [src]="previewUrl()" alt="Selected image preview" />
+                } @else if (previewUnsupported()) {
+                    <div class="empty-state">Preview not supported for TIFF files. You can still generate the mask.</div>
+                } @else {
+                    <div class="empty-state">Select an image to preview.</div>
+                }
+            </div>
+        </article>
+
+        <article class="preview-panel">
+            <header>
+                <h2>Segmented Output</h2>
+            </header>
+            <div class="preview-frame">
+                @if (outputUrl()) {
+                    <img [src]="outputUrl()" alt="Segmented output" />
+                } @else if (isLoading()) {
+                    <div class="empty-state">Processing image...</div>
+                } @else {
+                    <div class="empty-state">Generated mask will appear here.</div>
+                }
+            </div>
+        </article>
+    </section>
+
+    <section class="legend-card">
+        <h3>Material Labels</h3>
+        <div class="legend-grid">
+            @for (item of materialLegend; track item.name) {
+                <article class="legend-item">
+                    <span class="legend-swatch" [style.background-color]="item.hex" [attr.aria-label]="item.name + ' color'"></span>
+                    <div class="legend-text">
+                        <strong>{{ item.name }}</strong>
+                        <small>RGB ({{ item.rgb }}) | Hex {{ item.hex }}</small>
+                    </div>
+                </article>
+            }
+        </div>
+    </section>
+</main>

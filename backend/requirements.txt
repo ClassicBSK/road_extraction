@@ -4,3 +4,7 @@ opencv-python
 numpy
 torch
 segmentation-models-pytorch
+scipy
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp

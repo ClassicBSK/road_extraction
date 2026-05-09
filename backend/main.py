@@ -23,8 +23,7 @@ from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parent
-DEFAULT_ENSEMBLE_DIR = PROJECT_ROOT / "backend"  / "spacenet5"
-DEFAULT_MODEL_WEIGHTS = DEFAULT_ENSEMBLE_DIR / "spacenet_irv_unet_inceptionresnetv2_1_best_dice"
+DEFAULT_MODEL_WEIGHTS = BACKEND_DIR / "weights" / "spacenet_irv_unet_inceptionresnetv2_1_best_dice"
 OUTPUT_DIR = BACKEND_DIR / "outputs"
 
 try:

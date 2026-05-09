@@ -1,0 +1,8 @@
+archive.zip
+best_material_unet.pth
+best_model_state_dict.pth
+best_road_model.pth
+hsi-msi.ipynb
+PaviaU.mat
+PaviaU_gt.mat
+road_seg.py

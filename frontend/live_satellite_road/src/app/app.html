@@ -1,4 +1,5 @@
-<nav class="top-nav">
+<nav class="top-nav" [class.nav-live-view]="activeRoute().startsWith('/live-view') || activeRoute() === '/'" [class.nav-photo-upload]="activeRoute().startsWith('/photo-upload')">
 	<a routerLink="/live-view" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Live View Material</a>
+	<a routerLink="/photo-upload" routerLinkActive="active">Photo Upload</a>
 </nav>
 <router-outlet />

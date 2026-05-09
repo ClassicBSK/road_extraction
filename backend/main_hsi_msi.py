@@ -13,9 +13,9 @@ from urllib.parse import urlparse, urlunparse
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 
 try:
@@ -465,6 +465,14 @@ def _render_output_frame(frame_bgr: np.ndarray, request: VideoRequest) -> np.nda
     masked_labels = np.where(road_mask > 0, labels, 0).astype(np.uint8)
     return cv2.cvtColor(CLASS_COLORS[masked_labels], cv2.COLOR_RGB2BGR)
 
+@trace_decorator("_decode_uploaded_image")
+def _decode_uploaded_image(file_bytes: bytes) -> np.ndarray:
+    np_bytes = np.frombuffer(file_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(np_bytes, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Unable to decode image bytes")
+    return frame
+
 @trace_decorator("_normalize_video_url")
 def _normalize_video_url(raw_url: str) -> str:
     url = (raw_url or "").strip()
@@ -768,6 +776,39 @@ def segment_stream_url(
         save_output=save_output,
         output_prefix=output_filename,
     )
+
+
+@app.post("/segment/image")
+@trace_decorator("segment_image")
+def segment_image(
+    image: UploadFile = File(..., description="Image file to segment"),
+    confidence_threshold: float = Query(0.0, ge=0.0, le=1.0),
+):
+    if MODEL_LOADING:
+        raise HTTPException(status_code=503, detail="Model is still loading, please retry shortly")
+    if MODEL is None or ROAD_MODEL is None:
+        raise HTTPException(status_code=500, detail=f"Model not loaded: {MODEL_LOAD_ERROR}")
+
+    try:
+        file_bytes = image.file.read()
+        frame = _decode_uploaded_image(file_bytes)
+        request = VideoRequest(
+            video_url="upload",
+            frame_skip=1,
+            confidence_threshold=confidence_threshold,
+            save_output=False,
+        )
+        output_frame = _render_output_frame(frame, request)
+        success, encoded = cv2.imencode(".jpg", output_frame)
+        if not success:
+            raise RuntimeError("Failed to encode output image")
+        return Response(content=encoded.tobytes(), media_type="image/jpeg")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected server error: {exc}") from exc
 
 
 @app.get("/segment/download/{filename}")

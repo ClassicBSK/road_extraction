@@ -338,13 +338,8 @@ def _predict_mask(frame_bgr: np.ndarray, confidence_threshold: float = 0.0) -> n
 	pred_np = pred.squeeze(0).detach().cpu().numpy().astype(np.uint8)
 	conf_np = conf.squeeze(0).detach().cpu().numpy()
 	label_np = np.where(conf_np >= threshold, pred_np + 1, 0).astype(np.uint8)
-<<<<<<< HEAD
 	mask_resized = cv2.resize(label_np, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
-	# Use fancy indexing to map label values to colors (type checker doesn't recognize this pattern)
-	mask_bgr = SELIM_COLOR_PALETTE[mask_resized]  # type: ignore[index]
-	return mask_bgr
-=======
-	return cv2.resize(label_np, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
+	return _colorize_labels(mask_resized)
 
 
 def _map_speed_labels_to_material_labels(speed_labels: np.ndarray) -> np.ndarray:
@@ -357,8 +352,7 @@ def _map_speed_labels_to_material_labels(speed_labels: np.ndarray) -> np.ndarray
 
 def _colorize_labels(label_map: np.ndarray) -> np.ndarray:
 	material_labels = _map_speed_labels_to_material_labels(label_map)
-	return MATERIAL_COLOR_PALETTE[material_labels]
->>>>>>> 6880dd06821d1d0597bd7de18ce51356bdd1d18a
+	return MATERIAL_COLOR_PALETTE[material_labels]  # type: ignore[index]
 
 
 def _normalize_video_url(raw_url: str) -> str:

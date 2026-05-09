@@ -4,3 +4,9 @@ opencv-python
 numpy
 torch
 segmentation-models-pytorch
+sqlalchemy
+bcrypt>=4.0.0
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+pydantic[email]

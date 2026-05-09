@@ -19,6 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+# Import authentication routes
+from auth_routes import router as auth_router, projects_router, setup_database
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -214,6 +217,14 @@ def _startup() -> None:
 	# Start model loading in the background so API startup is responsive.
 	_log_stage("app.startup")
 	_start_model_loading_background()
+	# Initialize database
+	setup_database()
+	_log_stage("database.initialized")
+
+
+# Include authentication and project routes
+app.include_router(auth_router)
+app.include_router(projects_router)
 
 
 def _predict_mask(frame_bgr: np.ndarray, confidence_threshold: float = 0.0) -> np.ndarray:
@@ -235,7 +246,8 @@ def _predict_mask(frame_bgr: np.ndarray, confidence_threshold: float = 0.0) -> n
 	conf_np = conf.squeeze(0).detach().cpu().numpy()
 	label_np = np.where(conf_np >= threshold, pred_np + 1, 0).astype(np.uint8)
 	mask_resized = cv2.resize(label_np, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
-	mask_bgr = SELIM_COLOR_PALETTE[mask_resized]
+	# Use fancy indexing to map label values to colors (type checker doesn't recognize this pattern)
+	mask_bgr = SELIM_COLOR_PALETTE[mask_resized]  # type: ignore[index]
 	return mask_bgr
 
 
@@ -363,7 +375,7 @@ def _frame_stream(request: VideoRequest) -> Generator[bytes, None, None]:
 
 		filename = request.output_filename or f"mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
 		output_path = OUTPUT_DIR / filename
-		fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+		fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
 		writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
 
 	try:

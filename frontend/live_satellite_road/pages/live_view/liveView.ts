@@ -28,7 +28,7 @@ export class LiveView {
     { name: 'Metal', rgb: '169, 169, 169', hex: '#A9A9A9' },
     { name: 'Soil', rgb: '139, 69, 19', hex: '#8B4513' },
     { name: 'Bitumen', rgb: '75, 0, 130', hex: '#4B0082' },
-    { name: 'Bricks', rgb: '178, 34, 34', hex: '#B22222' }
+    { name: 'Bricks', rgb: '255, 255, 0', hex: '#FFFF00' }
   ] as const;
 
   private isLikelyImageStream(url: string): boolean {

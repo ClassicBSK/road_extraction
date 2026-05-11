@@ -74,5 +74,3 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
     if not verify_password(password, user.hashed_password):  # type: ignore[arg-type]
         return None
     return user
-
-# Made with Bob

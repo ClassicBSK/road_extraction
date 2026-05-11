@@ -191,5 +191,3 @@ def get_project(
 # Initialize database
 def setup_database():
     init_db()
-
-# Made with Bob
